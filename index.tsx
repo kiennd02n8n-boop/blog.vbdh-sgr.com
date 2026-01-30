@@ -1106,7 +1106,8 @@ const ChatWidget = ({ content }: { content: any }) => {
         // keep a short convenience field for the latest user input
         latest: textToSend,
         // n8n 'guardrails' node expects prompt in 'guardrailsInput' — include for compatibility
-        guardrailsInput: textToSend
+        // send as object with `prompt` field per n8n guardrails node expectations
+        guardrailsInput: { prompt: textToSend }
       };
 
       // 60s timeout
