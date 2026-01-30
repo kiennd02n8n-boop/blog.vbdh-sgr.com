@@ -1104,7 +1104,9 @@ const ChatWidget = ({ content }: { content: any }) => {
         session_id: sessionId,
         messages: payloadMessages,
         // keep a short convenience field for the latest user input
-        latest: textToSend
+        latest: textToSend,
+        // n8n 'guardrails' node expects prompt in 'guardrailsInput' — include for compatibility
+        guardrailsInput: textToSend
       };
 
       // 60s timeout
@@ -1128,8 +1130,17 @@ const ChatWidget = ({ content }: { content: any }) => {
 
       const json = await resp.json();
 
-      // Expecting { output: "text" }
-      const botMessage = (json && (json.output || json.output_text || json.text)) ? (json.output || json.output_text || json.text) : "No response from webhook.";
+      // Prefer structured 'output' fields; if n8n returns an error object like { type: 'error', content: '...' } show that content.
+      let botMessage = "No response from webhook.";
+      if (json) {
+        if (json.type === 'error' && json.content) {
+          botMessage = json.content;
+        } else if (json.output || json.output_text || json.text) {
+          botMessage = json.output || json.output_text || json.text;
+        } else if (typeof json === 'string') {
+          botMessage = json;
+        }
+      }
 
       setMessages(prev => [...prev, { role: 'model', text: botMessage }]);
     } catch (error) {
