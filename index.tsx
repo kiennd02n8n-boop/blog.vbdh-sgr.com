@@ -1132,34 +1132,31 @@ const ChatWidget = ({ content }: { content: any }) => {
       // Webhook can return either a single JSON object or a stream/NDJSON sequence of JSON objects.
       // Try to parse JSON normally, otherwise fallback to text parsing and collect 'content' pieces.
       let json: any = null;
+      const raw = await resp.text();
       try {
-        json = await resp.json();
+        json = JSON.parse(raw);
       } catch (parseErr) {
-        try {
-          const raw = await resp.text();
-          const lines = raw.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
-          const pieces: string[] = [];
-          for (const line of lines) {
-            try {
-              const obj = JSON.parse(line);
-              if (obj && obj.content) pieces.push(String(obj.content));
-              else if (obj && (obj.output || obj.output_text || obj.text)) pieces.push(String(obj.output || obj.output_text || obj.text));
-            } catch (err) {
-              // ignore non-json lines
-            }
+        // NDJSON / streaming fallback: split into lines and parse each JSON object
+        const lines = raw.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+        const pieces: string[] = [];
+        for (const line of lines) {
+          try {
+            const obj = JSON.parse(line);
+            if (obj && obj.content) pieces.push(String(obj.content));
+            else if (obj && (obj.output || obj.output_text || obj.text)) pieces.push(String(obj.output || obj.output_text || obj.text));
+          } catch (err) {
+            // ignore non-json lines
           }
-          if (pieces.length) {
-            json = { output: pieces.join('') };
-          } else {
-            // fallback: if raw contains JSON objects stuck together, try to pull "content" substrings as a last resort
-            const contentMatches = raw.match(/"content"\s*:\s*"([^"]+)"/g);
-            if (contentMatches) {
-              const extracted = contentMatches.map(m => m.replace(/"content"\s*:\s*"/, '').replace(/"$/, '')).join('');
-              json = { output: extracted };
-            }
+        }
+        if (pieces.length) {
+          json = { output: pieces.join('') };
+        } else {
+          // fallback: if raw contains JSON objects stuck together, try to pull "content" substrings as a last resort
+          const contentMatches = raw.match(/"content"\s*:\s*"([^\"]+)"/g);
+          if (contentMatches) {
+            const extracted = contentMatches.map(m => m.replace(/"content"\s*:\s*"/, '').replace(/"$/, '')).join('');
+            json = { output: extracted };
           }
-        } catch (err) {
-          console.error('Failed to parse webhook streaming response', err);
         }
       }
 
