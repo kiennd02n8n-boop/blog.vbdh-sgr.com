@@ -1023,13 +1023,21 @@ const ChatWidget = ({ content }: { content: any }) => {
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
+  const [sessionId, setSessionId] = useState<string>(() => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2,9)}`);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Reset chat when language changes
   useEffect(() => {
     setMessages([{ role: 'model', text: content.ai.welcome }]);
+    // rotate session id when the chat is reset by language change
+    setSessionId(`${Date.now().toString(36)}-${Math.random().toString(36).slice(2,9)}`);
   }, [content]);
+
+  const resetChat = () => {
+    setMessages([{ role: 'model', text: content.ai.welcome }]);
+    setSessionId(`${Date.now().toString(36)}-${Math.random().toString(36).slice(2,9)}`);
+  };
 
   const toggleChat = () => setIsOpen(!isOpen);
 
@@ -1086,36 +1094,48 @@ const ChatWidget = ({ content }: { content: any }) => {
     setIsLoading(true);
 
     try {
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-      let parts: any[] = [];
+      // Send user messages + session to external webhook (n8n)
+      const webhookUrl = 'https://vbdh-sgr.com/webhook/1d622d07-3ae2-4820-8b74-4e53ce0469cb/chat';
 
-      if (imageForRequest) {
-        // Convert file to base64
-        const base64Data = imageForRequest.split(',')[1];
-        const mimeType = imageForRequest.split(';')[0].split(':')[1];
-        parts.push({ inlineData: { data: base64Data, mimeType: mimeType } });
-      }
+      // Prepare messages payload (include all messages so far, plus this user turn)
+      const payloadMessages = newMessages.map(m => ({ role: m.role, text: m.text }));
 
-      if (textToSend) {
-        parts.push({ text: textToSend });
-      }
+      const body = {
+        session_id: sessionId,
+        messages: payloadMessages,
+        // keep a short convenience field for the latest user input
+        latest: textToSend
+      };
 
-      // Using gemini-2.0-flash for stability
-      const response = await ai.models.generateContent({
-        model: 'gemini-2.0-flash',
-        contents: [
-          { role: 'user', parts: parts }
-        ],
-        config: {
-          systemInstruction: content.ai.context,
-        }
+      // 60s timeout
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 60_000);
+
+      const resp = await fetch(webhookUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: controller.signal
       });
 
-      const botMessage = response.text || "Sorry, I am unable to respond at the moment.";
+      clearTimeout(timeout);
+
+      if (!resp.ok) {
+        console.error('Webhook error status', resp.status);
+        setMessages(prev => [...prev, { role: 'model', text: "Error from webhook. Please try again later." }]);
+        return;
+      }
+
+      const json = await resp.json();
+
+      // Expecting { output: "text" }
+      const botMessage = (json && (json.output || json.output_text || json.text)) ? (json.output || json.output_text || json.text) : "No response from webhook.";
+
       setMessages(prev => [...prev, { role: 'model', text: botMessage }]);
     } catch (error) {
       console.error("Chat error:", error);
-      setMessages(prev => [...prev, { role: 'model', text: "Error occurred. Please try again." }]);
+      const isAbort = (error && error.name === 'AbortError');
+      setMessages(prev => [...prev, { role: 'model', text: isAbort ? "Timed out waiting for webhook (60s). Please try again." : "Error occurred. Please try again." }]);
     } finally {
       setIsLoading(false);
     }
@@ -1138,6 +1158,14 @@ const ChatWidget = ({ content }: { content: any }) => {
                 <p className="text-[10px] text-gold-light opacity-80 uppercase tracking-widest">Tri Âm 2026</p>
               </div>
             </div>
+
+            {/* Reset button to start a fresh session */}
+            <button onClick={resetChat} title="Reset chat" className="text-white/80 hover:text-white relative z-10 p-1 mr-2 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-gold rounded">
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 md:h-6 md:w-6" viewBox="0 0 20 20" fill="currentColor">
+                <path d="M10 4V1L6 5l4 4V6a4 4 0 110 8 4 4 0 01-3.464-2H5.1A5.99 5.99 0 0010 16a6 6 0 000-12z" />
+              </svg>
+            </button>
+
             <button onClick={toggleChat} className="text-white/80 hover:text-white relative z-10 p-1 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-gold rounded">
               <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 md:h-6 md:w-6" viewBox="0 0 20 20" fill="currentColor">
                 <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
